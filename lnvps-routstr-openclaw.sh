@@ -1016,29 +1016,10 @@ if [ "$SKIP_CREATION" = "false" ]; then
         echo "Private key saved to: $key_path"
     fi
 
-    # Get available OS images
+    # Auto-select Debian 13 Server image (id: 6)
+    image_id=6
     echo ""
-    echo "Fetching available OS images..."
-    images_response=$(curl -s "${API_BASE}/image")
-    images=$(echo "$images_response" | jq -r '.data // []')
-
-    if [ -z "$images" ] || [ "$images" = "[]" ] || [ "$images" = "null" ]; then
-        echo "Error: Could not fetch images"
-        exit 1
-    fi
-
-    echo ""
-    echo "Available OS images:"
-    echo "$images" | jq -r '.[] | "  \(.id): \(.distribution) \(.version) (\(.flavour))"'
-    echo ""
-    echo "Enter image ID (or press enter for Ubuntu default):"
-    read image_id
-
-    if [ -z "$image_id" ]; then
-        # Find Ubuntu image as default
-        image_id=$(echo "$images" | jq -r '[.[] | select(.distribution == "ubuntu")] | .[0].id // .[0].id')
-        echo "Using image ID: $image_id"
-    fi
+    echo "Using OS image: Debian 13 Server (image ID: $image_id)"
 
     # Create VM order
     echo ""
@@ -1108,9 +1089,10 @@ if [ "$SKIP_CREATION" = "false" ]; then
     echo ""
     echo "========================================"
     echo "VPS COST: $amount sats"
+    echo "Raw Amount & Currency: $amount_raw $currency"
     echo "========================================"
 
-    if [ "$OS_TYPE" = "mac" ]; then
+    if [ "$OS_TYPE" = "mac" ] || [ "$OS_TYPE" = "linux" ]; then
         # macOS: Direct Lightning payment (no cdk-cli)
         echo ""
         echo "Pay the VPS invoice directly with your Lightning wallet:"
@@ -1349,7 +1331,32 @@ echo ""
 echo "Installing OpenClaw on VPS, this will take a solid 5 mins..."
 if [ -n "$ssh_private_key" ]; then
 
-    if [ "$OS_TYPE" = "mac" ]; then
+    # Apply network fix before installing
+    echo "Applying network fix..."
+    max_retries=5
+    retry_count=0
+    net_fix_success=false
+    while [ $retry_count -lt $max_retries ]; do
+        if ssh -i "$ssh_private_key" "$vm_user@$vm_ip_clean" "curl -fsSL https://routstr.com/lnvps-net-fix.sh | sudo bash" 2>&1; then
+            net_fix_success=true
+            break
+        else
+            ssh_exit_code=$?
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                echo ""
+                echo "SSH connection failed (VPS may still be starting). Waiting 12 seconds before retry $retry_count/$max_retries..."
+                sleep 12
+            fi
+        fi
+    done
+    if [ "$net_fix_success" = false ]; then
+        echo ""
+        echo "Warning: Network fix script failed after $max_retries attempts, continuing anyway..."
+        echo ""
+    fi
+
+    if [ "$OS_TYPE" = "mac" ] || [ "$OS_TYPE" = "linux" ]; then
         # Mac: Skip cashu token generation and run without --cashu flag
         if ! ssh -i "$ssh_private_key" "$vm_user@$vm_ip_clean" "curl -L https://routstr.com/routstr-openclaw.sh | bash -s -- --lnvps"; then
             echo ""
@@ -1453,6 +1460,11 @@ if [ -n "$ssh_private_key" ]; then
     echo "Then run this command:"
     echo ""
     echo "  openclaw channels add"
+    echo ""
+    echo "-------------------------------------------------------"
+    echo "Consider Supporting Us:"
+    echo "bc1qn0qa6nugljxnaaulmy7ju66x89cxdul3krutate2ma66rrll8luq2aaedu"
+    echo "-------------------------------------------------------"
 else
     echo "Something must've gone wrong, can't find your SSH key, pls try again"
 fi

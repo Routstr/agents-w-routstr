@@ -2,6 +2,14 @@
 
 set -e
 
+# Detect if running interactively (stdin is a terminal)
+# When piped via curl | bash, stdin is the script itself, not a terminal
+if [ -t 0 ]; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CDK_CLI_DIR="$SCRIPT_DIR/temp-routstr"
 CDK_CLI_BIN="$CDK_CLI_DIR/cdk-cli-v0.13.0"
@@ -46,7 +54,38 @@ install_jq() {
             if command -v apt-get >/dev/null 2>&1; then
                 SUDO=""
                 [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
-                $SUDO apt-get update && $SUDO apt-get install -y jq
+                # Force IPv4 to avoid IPv6 connectivity issues on some cloud providers
+                if [ ! -f /etc/apt/apt.conf.d/99force-ipv4 ]; then
+                    echo 'Acquire::ForceIPv4 "true";' | $SUDO tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
+                fi
+                RETRY_COUNT=0
+                MAX_RETRIES=30
+                APT_WAITING_SHOWN=0
+                while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                    APT_FAILED=0
+                    $SUDO apt-get update >/dev/null 2>&1 || APT_FAILED=1
+                    if [ $APT_FAILED -eq 0 ]; then
+                        # Clear the waiting message if it was shown
+                        [ $APT_WAITING_SHOWN -eq 1 ] && echo ""
+                        $SUDO apt-get install -y jq >/dev/null 2>&1 && break
+                    fi
+                    
+                    RETRY_COUNT=$((RETRY_COUNT + 1))
+                    if [ $APT_WAITING_SHOWN -eq 0 ]; then
+                        printf "System is installing dependencies, please wait"
+                        APT_WAITING_SHOWN=1
+                    fi
+                    printf "."
+                    sleep 20
+                done
+                
+                # Clear the waiting line if shown
+                [ $APT_WAITING_SHOWN -eq 1 ] && echo ""
+                
+                if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                    echo "Error: apt-get failed after $MAX_RETRIES attempts."
+                    exit 1
+                fi
             elif command -v yum >/dev/null 2>&1; then
                 SUDO=""
                 [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
@@ -253,7 +292,13 @@ create_cashu_token() {
         echo "Payment not detected yet. Would you like to:"
         echo "1) Continue waiting"
         echo "2) Exit and try again later"
-        read -p "Choice [1/2]: " choice
+        
+        if [ "$INTERACTIVE" = true ]; then
+            read -p "Choice [1/2]: " choice </dev/tty
+        else
+            echo "Non-interactive mode: continuing to wait..."
+            choice="1"
+        fi
         
         if [ "$choice" = "1" ]; then
             # Continue polling
@@ -305,57 +350,73 @@ create_cashu_token() {
 
 # If no cashu token provided, offer to create one
 if [ -z "$CASHU_TOKEN" ]; then
-    echo ""
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║           OpenClaw Setup - Cashu Token Required            ║"
-    echo "╠════════════════════════════════════════════════════════════╣"
-    echo "║  No cashu token provided. You can:                         ║"
-    echo "║                                                            ║"
-    echo "║  1) Create a new token by paying a Lightning invoice       ║"
-    echo "║  2) Exit and provide a token manually with --cashu <token> ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
-    echo ""
-    read -p "Would you like to create a cashu token now? [Y/n]: " CREATE_TOKEN
-    
-    if [[ "$CREATE_TOKEN" =~ ^[Nn] ]]; then
+    # In non-interactive mode (piped via curl | bash), we cannot prompt for input
+    if [ "$INTERACTIVE" = false ]; then
         echo ""
-        echo "Usage: $0 --cashu <token>"
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║           OpenClaw Setup - Cashu Token Required            ║"
+        echo "╠════════════════════════════════════════════════════════════╣"
+        echo "║  Running in non-interactive mode (piped execution).        ║"
+        echo "║  Using default amount: 2100 sats                           ║"
+        echo "║                                                            ║"
+        echo "║  To provide a token manually, use:                         ║"
+        echo "║    --cashu <token>                                         ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
         echo ""
-        echo "You can obtain a cashu token from https://cashu.me/"
-        echo "or run this script without arguments to create one interactively."
-        exit 0
+        AMOUNT=2100
+    else
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║           OpenClaw Setup - Cashu Token Required            ║"
+        echo "╠════════════════════════════════════════════════════════════╣"
+        echo "║  No cashu token provided. You can:                         ║"
+        echo "║                                                            ║"
+        echo "║  1) Create a new token by paying a Lightning invoice       ║"
+        echo "║  2) Exit and provide a token manually with --cashu <token> ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
+        echo ""
+        read -p "Would you like to create a cashu token now? [Y/n]: " CREATE_TOKEN </dev/tty
+        
+        if [[ "$CREATE_TOKEN" =~ ^[Nn] ]]; then
+            echo ""
+            echo "Usage: $0 --cashu <token>"
+            echo ""
+            echo "You can obtain a cashu token from https://cashu.me/"
+            echo "or run this script without arguments to create one interactively."
+            exit 0
+        fi
+        
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║              Select Amount to Fund Your Wallet             ║"
+        echo "╠════════════════════════════════════════════════════════════╣"
+        echo "║  1) 4200 sats  (Recommended - good for extended use)       ║"
+        echo "║  2) 2100 sats  (Standard)                                  ║"
+        echo "║  3) 1000 sats  (Minimum)                                   ║"
+        echo "║  4) Custom amount                                          ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
+        echo ""
+        read -p "Select option [1-4] (default: 1): " AMOUNT_CHOICE </dev/tty
+        
+        case "$AMOUNT_CHOICE" in
+            2)
+                AMOUNT=2100
+                ;;
+            3)
+                AMOUNT=1000
+                ;;
+            4)
+                read -p "Enter custom amount in sats: " AMOUNT </dev/tty
+                if ! [[ "$AMOUNT" =~ ^[0-9]+$ ]] || [ "$AMOUNT" -lt 100 ]; then
+                    echo "Error: Invalid amount. Please enter a number >= 100"
+                    exit 1
+                fi
+                ;;
+            *)
+                AMOUNT=4200
+                ;;
+        esac
     fi
-    
-    echo ""
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║              Select Amount to Fund Your Wallet             ║"
-    echo "╠════════════════════════════════════════════════════════════╣"
-    echo "║  1) 4200 sats  (Recommended - good for extended use)       ║"
-    echo "║  2) 2100 sats  (Standard)                                  ║"
-    echo "║  3) 1000 sats  (Minimum)                                   ║"
-    echo "║  4) Custom amount                                          ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
-    echo ""
-    read -p "Select option [1-4] (default: 1): " AMOUNT_CHOICE
-    
-    case "$AMOUNT_CHOICE" in
-        2)
-            AMOUNT=2100
-            ;;
-        3)
-            AMOUNT=1000
-            ;;
-        4)
-            read -p "Enter custom amount in sats: " AMOUNT
-            if ! [[ "$AMOUNT" =~ ^[0-9]+$ ]] || [ "$AMOUNT" -lt 100 ]; then
-                echo "Error: Invalid amount. Please enter a number >= 100"
-                exit 1
-            fi
-            ;;
-        *)
-            AMOUNT=4200
-            ;;
-    esac
     
     echo ""
     echo "Setting up cdk-cli for token creation..."
@@ -444,7 +505,28 @@ else
 fi
 
 # Move contents of skills folder to the target location
+# First try the default npm-global path
 TARGET_SKILLS_DIR="$HOME/.npm-global/lib/node_modules/openclaw/skills/"
+
+# Check if directory exists and has subdirectories
+if [ ! -d "$TARGET_SKILLS_DIR" ] || [ -z "$(find "$TARGET_SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)" ]; then
+    # Fall back to finding skills dir relative to npm location
+    if command -v npm >/dev/null 2>&1; then
+        NPM_PATH=$(command -v npm)
+        NPM_DIR=$(dirname "$NPM_PATH")
+        # NPM_DIR is <node_version>/bin, we need <node_version>/lib/node_modules/openclaw/skills
+        NODE_VERSION_DIR=$(dirname "$NPM_DIR")
+        FALLBACK_SKILLS_DIR="$NODE_VERSION_DIR/lib/node_modules/openclaw/skills/"
+        if [ -d "$FALLBACK_SKILLS_DIR" ] || [ -d "$(dirname "$FALLBACK_SKILLS_DIR")" ]; then
+            TARGET_SKILLS_DIR="$FALLBACK_SKILLS_DIR"
+            mkdir -p "$TARGET_SKILLS_DIR"
+        fi
+    fi
+fi
+
+# Ensure target directory exists
+mkdir -p "$TARGET_SKILLS_DIR"
+
 for skill in skills/*; do
     if [ -e "$skill" ]; then
         skill_name=$(basename "$skill")
@@ -502,15 +584,22 @@ $OPENCLAW_BIN onboard --non-interactive \
         --daemon-runtime node \
         --skip-skills
 
-echo ""
-echo "#######################################################"
-echo "#                                                     #"
-echo "#      OPENCLAW & ROUTSTR SETUP COMPLETE! 🚀          #"
-echo "#                                                     #"
-echo "#######################################################"
-echo ""
-echo "⚠️  ONE LAST ACTION REQUIRED ⚠️"
-echo ""
-echo "To setup your message channels, run this command:"
-echo ""
-echo "  openclaw channels add"
+if [ "$LNVPS" = false ]; then
+    echo ""
+    echo "#######################################################"
+    echo "#                                                     #"
+    echo "#      OPENCLAW & ROUTSTR SETUP COMPLETE! 🚀          #"
+    echo "#                                                     #"
+    echo "#######################################################"
+    echo ""
+    echo "⚠️  ONE LAST ACTION REQUIRED ⚠️"
+    echo ""
+    echo "To setup your message channels, run this command:"
+    echo ""
+    echo "  openclaw channels add"
+    echo ""
+    echo "-------------------------------------------------------"
+    echo "Consider Supporting Us:"
+    echo "bc1qn0qa6nugljxnaaulmy7ju66x89cxdul3krutate2ma66rrll8luq2aaedu"
+    echo "-------------------------------------------------------"
+fi
