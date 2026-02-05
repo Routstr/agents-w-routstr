@@ -16,13 +16,9 @@ CASHU_TOKEN="$1"
 BASE_URL=$(jq -r '.models.providers.routstr.baseUrl' "$CONFIG_FILE")
 API_KEY=$(jq -r '.models.providers.routstr.apiKey' "$CONFIG_FILE")
 
-echo $API_KEY
-echo $BASE_URL
-echo "${BASE_URL}/v1/wallet/topup?cashu_token=$(echo "${CASHU_TOKEN}" | jq -sRr @uri)" 
-
 # Make topup request (cashu token in query params, not body)
 echo "Topping up with Cashu token..."
-RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/wallet/topup?cashu_token=$(echo "${CASHU_TOKEN}" | jq -sRr @uri)" \
+RESPONSE=$(curl -s -X POST "${BASE_URL}/wallet/topup?cashu_token=$(echo "${CASHU_TOKEN}" | jq -sRr @uri)" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${API_KEY}")
 
