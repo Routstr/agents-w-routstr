@@ -10,6 +10,7 @@ compatibility: opencode
 - Display usage statistics (total spent, total requests)
 - Create Lightning invoices for top-up payments
 - Check payment status of existing invoices
+- Top up balance using Cashu tokens
 
 ## When to use me
 Use this when you need to:
@@ -23,5 +24,6 @@ The shell scripts read API configuration from `~/.openclaw/openclaw.json`:
 - `check_balance.sh` - Run with no arguments to display current balance and usage
 - `create_invoice.sh <amount_sats>` - Create invoice for specified amount in satoshis
 - `invoice_status.sh <invoice_id>` - Check payment status of an invoice
+- `topup_cashu.sh <cashu_token>` - Top up balance using a Cashu token
 
 All amounts are displayed in both satoshis and BTC for convenience.
