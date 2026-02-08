@@ -55,8 +55,8 @@
             "reasoning": true
           },
           {
-            "id": "venice-uncensored",
-            "name": "Venice Uncensored",
+            "id": "qwen3-coder-next",
+            "name": "Qwen3 Coder Next",
             "reasoning": true
           },
           {
@@ -86,13 +86,10 @@
   "agents": {
     "defaults": {
       "model": {
-        "fallbacks": ["openrouter/auto"],
+        "fallbacks": ["routstr/qwen3-coder-next"],
         "primary": "routstr/glm-4.7"
       },
       "models": {
-        "openrouter/auto": {
-          "alias": "OpenRouter"
-        },
         "routstr/gemini-3-pro-preview": {
           "alias": "gemini-3-pro"
         },
@@ -120,8 +117,8 @@
         "routstr/grok-4.1-fast": {
           "alias": "grok-4.1"
         },
-        "routstr/venice-uncensored": {
-          "alias": "venice"
+        "routstr/qwen3-coder-next": {
+          "alias": "qwen3-coder-next"
         },
         "routstr/deepseek-v3.2-speciale": {
           "alias": "deepseek-special"
